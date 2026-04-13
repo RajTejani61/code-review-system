@@ -1,0 +1,9 @@
+langgraph
+langchain
+langchain-core
+langchain-classic
+langchain-community
+langchain-mistralai
+langchain-openrouter
+fastapi
+pydantic
