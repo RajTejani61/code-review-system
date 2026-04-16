@@ -1,6 +1,5 @@
 import asyncio
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import llm
@@ -77,8 +76,6 @@ async def generate_final_report(state: GraphState) -> dict:
 
 
 def build_graph():
-    checkpointer = InMemorySaver()
-
     graph = StateGraph(GraphState)
     
     # Add nodes for each agent
@@ -102,7 +99,7 @@ def build_graph():
 
     graph.add_edge("generate_final_report", END)
 
-    return graph.compile(checkpointer=checkpointer)
+    return graph.compile()
 
 
 orchestrator_graph = build_graph()
@@ -112,8 +109,8 @@ async def run_review(code: str, language: str) -> FinalReport:
     """Convenience wrapper - call this from your API / CLI."""
     
     result = await orchestrator_graph.ainvoke(
-        {"code": code, "language": language, "messages": []},
-        config={"configurable": {"thread_id": "review-session"}},
+        {"code": code, "language": language, "messages": []}
     )
 
     return result["final_report"]
+
