@@ -11,7 +11,7 @@ from prompts.sub_agents_prompts import (
     )
 
 
-from schemas.style_agent_schema import StyleAgentOutput
+from agents.schemas.style_agent_schema import StyleAgentOutput
 style_agent = create_agent(
     model=llm,
     system_prompt=style_agent_prompt,
@@ -19,7 +19,7 @@ style_agent = create_agent(
 )
 
 
-from schemas.security_agent_schema import SecurityAgentOutput
+from agents.schemas.security_agent_schema import SecurityAgentOutput
 security_agent = create_agent(
     model=llm,
     system_prompt=security_agent_prompt,
@@ -27,7 +27,7 @@ security_agent = create_agent(
 )
 
 
-from schemas.performance_agent_schema import PerformanceAgentOutput
+from agents.schemas.performance_agent_schema import PerformanceAgentOutput
 performance_agent = create_agent(
     model=llm,
     system_prompt=performance_agent_prompt,
@@ -35,7 +35,7 @@ performance_agent = create_agent(
 )
 
 
-from schemas.logic_agent_schema import LogicAgentOutput
+from agents.schemas.logic_agent_schema import LogicAgentOutput
 logic_agent = create_agent(
     model=llm,
     system_prompt=logic_agent_prompt,
