@@ -1,38 +1,21 @@
-from fastapi import FastAPI, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from fastapi import FastAPI
 
-from database.database import engine, get_db, Base
-from database import models
-from database.models import User
-from schemas.api_schemas import UserCreate, UserResponse
+from users.router import router as users_router
+from reviews.router import router as reviews_router
+
+from database.database import Base, engine
+import users.models
+import reviews.models
 
 # Create tables
-models.Base.metadata.create_all(bind=engine)
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Code Review System")
 
+app.include_router(users_router)
+app.include_router(reviews_router)
 
 @app.get("/")
 def health_check():
     return {"status": "ok", "message": "Code Review API is running"}
-
-
-# User Endpoint
-@app.post("/users", response_model=UserResponse)
-def create_user(user: UserCreate, db: Session = Depends(get_db)):
-    
-    # Check if user exists
-    existing_user = db.query(User).filter(User.email == user.email).first()
-    if existing_user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
-    
-    # Create user
-    db_user = User(
-        email=user.email,
-        password_hash=user.password # Temporary: storing plain
-    )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
 
