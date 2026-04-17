@@ -3,7 +3,7 @@ from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import llm
-from schemas.orchestrator_schema import FinalReport, GraphState
+from agents.schemas.orchestrator_schema import FinalReport, GraphState
 from prompts.orchestrator_prompt import orchestrator_agent_prompt
 
 from agents.sub_agents import security_agent, performance_agent, logic_agent, style_agent
@@ -23,28 +23,28 @@ def get_input_payload(state: GraphState):
     return {"messages" : [{"role" : "user", "content" : user_message}]}
 
 async def security_node(state: GraphState) -> dict:
-    """Invoke the security agent."""
+    """security agent."""
     result = await security_agent.ainvoke(get_input_payload(state))
     return {"security_review": result["structured_response"]}
 
 async def performance_node(state: GraphState) -> dict:
-    """Invoke the performance agent."""
+    """performance agent."""
     result = await performance_agent.ainvoke(get_input_payload(state))
     return {"performance_review": result["structured_response"]}
 
 async def logic_node(state: GraphState) -> dict:
-    """Invoke the logic agent."""
+    """logic agent."""
     result = await logic_agent.ainvoke(get_input_payload(state))
     return {"logic_review": result["structured_response"]}
 
 async def style_node(state: GraphState) -> dict:
-    """Invoke the style agent."""
+    """style agent."""
     result = await style_agent.ainvoke(get_input_payload(state))
     return {"style_review": result["structured_response"]}
 
 
 async def generate_final_report(state: GraphState) -> dict:
-    """Feed all sub-agent outputs to the orchestrator LLM and get FinalReport."""
+    """orchestrator agent."""
     
     orchestrator_llm = llm.with_structured_output(FinalReport)
 
