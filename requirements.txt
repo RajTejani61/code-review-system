@@ -7,3 +7,6 @@ langchain-mistralai
 langchain-openrouter
 fastapi
 pydantic
+python-multipart
+passlib
+bcrypt
