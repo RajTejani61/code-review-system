@@ -1,20 +1,27 @@
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
-from database.database import get_db
 
+from database.database import get_db, SessionLocal
 from agents.orchestrator_agent import run_review
 from users.models import User
 from reviews.models import Review
-from reviews.schemas import ReviewDetail
+from reviews.schemas import ReviewDetail, ReviewSummary
+from auth.oauth2 import get_current_user
 
 router = APIRouter(
-    prefix="/reviews",
+    prefix="/review",
     tags=["Reviews"]
 )
 
-# Background Task 
-async def process_review_background(review_id: int, db: Session):
-    """Runs the full agent review in the background and updates the DB."""
+
+# Background Task — creates its own DB session
+async def process_review_background(review_id: int):
+    """Runs the full agent review in the background and updates the DB.
+    
+    Opens a fresh session because the request-scoped session is already
+    closed by the time FastAPI runs background tasks.
+    """
+    db: Session = SessionLocal()
     try:
         # 1. Fetch the review row
         db_review = db.query(Review).filter(Review.id == review_id).first()
@@ -25,7 +32,7 @@ async def process_review_background(review_id: int, db: Session):
         db_review.status = "processing"
         db.commit()
 
-        # 3. Run the LangGraph orchestrator
+        # 3. Run the orchestrator agent
         final_report = await run_review(db_review.code, db_review.language)
 
         # 4. Save results and update status to 'completed'
@@ -33,15 +40,15 @@ async def process_review_background(review_id: int, db: Session):
         db_review.performance_review = final_report.performance.model_dump_json()
         db_review.logic_review = final_report.logic.model_dump_json()
         db_review.style_review = final_report.style.model_dump_json()
-        
+
         db_review.final_report = final_report.model_dump_json()
         db_review.overall_score = final_report.overall_score
         db_review.status = "completed"
-        
+
         db.commit()
 
     except Exception as e:
-        # 5. Handle failure
+        # 5. Rollback and mark as failed
         db.rollback()
         db_review = db.query(Review).filter(Review.id == review_id).first()
         if db_review:
@@ -49,15 +56,18 @@ async def process_review_background(review_id: int, db: Session):
             db_review.error_message = str(e)
             db.commit()
 
+    finally:
+        # Close the session
+        db.close()
 
 
-# Code Review Endpoint
-@router.post("/")
+# Submit Code Review
+@router.post("/", status_code=status.HTTP_202_ACCEPTED)
 async def request_review(
-    background_tasks: BackgroundTasks, 
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     language: str = Form(...),
-    user_id: int = Form(...),
+    current_user: User = Depends(get_current_user), 
     db: Session = Depends(get_db)
 ):
 
@@ -68,14 +78,9 @@ async def request_review(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Could not read file: {str(e)}")
 
-    # 2. Verify if user exists
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="User not found")
-
-    # 3. Create 'pending' review row
+    # 2. Change status
     db_review = Review(
-        user_id=user_id,
+        user_id=current_user.id,
         code=code_text,
         language=language,
         status="pending"
@@ -84,24 +89,43 @@ async def request_review(
     db.commit()
     db.refresh(db_review)
 
-    # 4. Fire background task
-    background_tasks.add_task(process_review_background, db_review.id, db)
+    # 3. Run Background task
+    background_tasks.add_task(process_review_background, db_review.id)
 
-    # 5. Return review id and status
+    # 4. Return review id
     return {
         "review_id": db_review.id,
         "status": "pending",
-        "message": "Review started in background"
+        "message": "Review started"
     }
 
 
-# Get Review Status Endpoint
+
+# Get Review Status
 @router.get("/{review_id}", response_model=ReviewDetail)
-def get_review_status(review_id: int, db: Session = Depends(get_db)):
-    
+def get_review_status(
+    review_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     db_review = db.query(Review).filter(Review.id == review_id).first()
-    
+
     if not db_review:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
 
+    if db_review.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorised to view this review")
+
     return db_review
+
+
+# Get All User Reviews
+@router.get("/", response_model=list[ReviewSummary])
+def get_all_user_reviews(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Returns a summary list of all reviews belonging to the current user."""
+    
+    reviews = db.query(Review).filter(Review.user_id == current_user.id).order_by(Review.created_at.desc()).all()
+    return reviews
