@@ -1,7 +1,6 @@
 from database.database import Base
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, ForeignKey, func
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql.expression import text
 from sqlalchemy.sql.sqltypes import TIMESTAMP
 
 class Review(Base):
@@ -24,7 +23,7 @@ class Review(Base):
     status = Column(String, default="pending") # pending | processing | completed | failed
     error_message = Column(String, nullable=True)
 
-    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=text('now()'))
+    created_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
     # Relationship back to user
     owner = relationship("User", back_populates="reviews")
