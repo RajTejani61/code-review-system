@@ -16,22 +16,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    # Starts a PostgreSQL database for your tests
-    services:
-      postgres:
-        image: postgres:15
-        env:
-          POSTGRES_USER: test
-          POSTGRES_PASSWORD: testpassword
-          POSTGRES_DB: testdb
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     env:
       DB_USERNAME: test
       DB_PASSWORD: testpassword
@@ -40,13 +24,14 @@ jobs:
       SECRET_KEY: "test-secret-key-for-ci"
       ALGORITHM: "HS256"
       ACCESS_TOKEN_EXPIRE_MINUTES: "60"
-      LLM_MODEL_NAME: "test-model"
+      LLM_MODEL_NAME: "mistral-small-2603"
+      MISTRAL_API_KEY: "test-key-ci"
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python 3.10
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
@@ -56,7 +41,7 @@ jobs:
           sudo apt-get install -y libpq-dev
           python -m pip install --upgrade pip
           pip install flake8 pytest
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
 
       - name: Check for Syntax Errors
         run: |
@@ -69,5 +54,5 @@ jobs:
 
       - name: Test with pytest
         run: |
-          export PYTHONPATH=$PYTHONPATH:.
-          pytest test/
+          export PYTHONPATH="${PYTHONPATH}:."
+          pytest test/ -v --tb=short

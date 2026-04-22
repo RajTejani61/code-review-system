@@ -1,0 +1,16 @@
+[flake8]
+max-line-length = 127
+exclude =
+    venv,
+    .venv,
+    __pycache__,
+    .git,
+    .github,
+    *.egg-info,
+    build,
+    dist,
+    other
+# Only fail on real errors; style warnings are informational
+per-file-ignores =
+    # conftest.py: imports after sys.path manipulation are expected
+    test/conftest.py:E402
