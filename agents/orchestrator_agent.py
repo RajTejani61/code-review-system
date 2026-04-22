@@ -1,4 +1,4 @@
-import asyncio
+import mlflow
 from langgraph.graph import StateGraph, START, END
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -7,6 +7,8 @@ from agents.schemas.orchestrator_schema import FinalReport, GraphState
 from prompts.orchestrator_prompt import orchestrator_agent_prompt
 
 from agents.sub_agents import security_agent, performance_agent, logic_agent, style_agent
+
+mlflow.langchain.autolog()
 
 sub_agents_input_message = """
     Review the following code written in {language} and provide feedback.

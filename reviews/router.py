@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, status, UploadFile, File, Form
+import json
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from database.database import get_db, SessionLocal
-from agents.orchestrator_agent import run_review
+from agents.orchestrator_agent import orchestrator_graph
 from users.models import User
 from reviews.models import Review
 from reviews.schemas import ReviewDetail, ReviewSummary
@@ -14,63 +16,19 @@ router = APIRouter(
 )
 
 
-# Background Task — creates its own DB session
-async def process_review_background(review_id: int):
-    """Runs the full agent review in the background and updates the DB.
-    
-    Opens a fresh session because the request-scoped session is already
-    closed by the time FastAPI runs background tasks.
-    """
-    db: Session = SessionLocal()
-    try:
-        # 1. Fetch the review row
-        db_review = db.query(Review).filter(Review.id == review_id).first()
-        if not db_review:
-            return
-
-        # 2. Update status to 'processing'
-        db_review.status = "processing"
-        db.commit()
-
-        # 3. Run the orchestrator agent
-        final_report = await run_review(db_review.code, db_review.language)
-
-        # 4. Save results and update status to 'completed'
-        db_review.security_review = final_report.security.model_dump_json()
-        db_review.performance_review = final_report.performance.model_dump_json()
-        db_review.logic_review = final_report.logic.model_dump_json()
-        db_review.style_review = final_report.style.model_dump_json()
-
-        db_review.final_report = final_report.model_dump_json()
-        db_review.overall_score = final_report.overall_score
-        db_review.status = "completed"
-
-        db.commit()
-
-    except Exception as e:
-        # 5. Rollback and mark as failed
-        db.rollback()
-        db_review = db.query(Review).filter(Review.id == review_id).first()
-        if db_review:
-            db_review.status = "failed"
-            db_review.error_message = str(e)
-            db.commit()
-
-    finally:
-        # Close the session
-        db.close()
-
-
 # Submit Code Review
-@router.post("/", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/", status_code=status.HTTP_201_CREATED)
 async def request_review(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     language: str = Form(...),
     current_user: User = Depends(get_current_user), 
     db: Session = Depends(get_db)
 ):
-
+    """Submits code for review and returns the review_id.
+    
+    The actual review process is triggered by connecting to the 
+    GET /review/{review_id}/stream endpoint.
+    """
     # 1. Read file content
     try:
         content = await file.read()
@@ -78,7 +36,7 @@ async def request_review(
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Could not read file: {str(e)}")
 
-    # 2. Change status
+    # 2. Save review record as pending
     db_review = Review(
         user_id=current_user.id,
         code=code_text,
@@ -89,16 +47,98 @@ async def request_review(
     db.commit()
     db.refresh(db_review)
 
-    # 3. Run Background task
-    background_tasks.add_task(process_review_background, db_review.id)
-
-    # 4. Return review id
+    # 3. Return review id
     return {
         "review_id": db_review.id,
         "status": "pending",
-        "message": "Review started"
+        "message": "Review submitted successfully."
     }
 
+
+# SSE Streaming Endpoint
+@router.get("/{review_id}/stream")
+async def stream_review(
+    review_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Streams the progress of a code review"""
+    
+    # 1. Fetch the review and verify ownership
+    db_review = db.query(Review).filter(Review.id == review_id).first()
+    if not db_review:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Review not found")
+    
+    if db_review.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorised to view this review")
+
+    async def event_generator():
+        # We open a fresh DB session for the generator because it runs in a different context
+        gen_db: Session = SessionLocal()
+        try:
+            # Re-fetch the review in the new session
+            review = gen_db.query(Review).filter(Review.id == review_id).first()
+            
+            # If already completed, just send the final report and close
+            if review.status == "completed":
+                yield f"data: {json.dumps({'event': 'report_done', 'data': json.loads(review.final_report)})}\n\n"
+                return
+
+            # Update status to processing
+            review.status = "processing"
+            gen_db.commit()
+
+            inputs = {"code": review.code, "language": review.language, "messages": []}
+            
+            # Run LangGraph streaming
+            async for event in orchestrator_graph.astream(inputs, stream_mode="updates"):
+                for node_name, output in event.items():
+                    payload = None
+                    
+                    if node_name == "security_node":
+                        res = output.get("security_review")
+                        review.security_review = res.model_dump_json()
+                        payload = {"event": "security_done", "data": res.model_dump()}
+                    
+                    elif node_name == "performance_node":
+                        res = output.get("performance_review")
+                        review.performance_review = res.model_dump_json()
+                        payload = {"event": "performance_done", "data": res.model_dump()}
+                    
+                    elif node_name == "logic_node":
+                        res = output.get("logic_review")
+                        review.logic_review = res.model_dump_json()
+                        payload = {"event": "logic_done", "data": res.model_dump()}
+                    
+                    elif node_name == "style_node":
+                        res = output.get("style_review")
+                        review.style_review = res.model_dump_json()
+                        payload = {"event": "style_done", "data": res.model_dump()}
+                    
+                    elif node_name == "generate_final_report":
+                        res = output.get("final_report")
+                        review.final_report = res.model_dump_json()
+                        review.overall_score = res.overall_score
+                        review.status = "completed"
+                        payload = {"event": "report_done", "data": res.model_dump()}
+                    
+                    if payload:
+                        gen_db.commit()
+                        yield f"data: {json.dumps(payload)}\n\n"
+
+        except Exception as e:
+            gen_db.rollback()
+            # Mark as failed in DB
+            review = gen_db.query(Review).filter(Review.id == review_id).first()
+            if review:
+                review.status = "failed"
+                review.error_message = str(e)
+                gen_db.commit()
+            yield f"data: {json.dumps({'event': 'error', 'data': str(e)})}\n\n"
+        finally:
+            gen_db.close()
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 # Get Review Status
