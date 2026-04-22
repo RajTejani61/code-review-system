@@ -32,12 +32,24 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+    env:
+      DB_USERNAME: test
+      DB_PASSWORD: testpassword
+      DB_HOST: localhost
+      DB_NAME: testdb
+      SECRET_KEY: "test-secret-key-for-ci"
+      ALGORITHM: "HS256"
+      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+      LLM_MODEL_NAME: "test-model"
+
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Python 3.10
         uses: actions/setup-python@v3
         with:
           python-version: "3.10"
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -48,7 +60,7 @@ jobs:
 
       - name: Check for Syntax Errors
         run: |
-          # This only catches real bugs (like syntax errors). It will stop the build if found.
+          # Fails the build if there are syntax errors or undefined names
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Show Style Warnings
@@ -56,15 +68,6 @@ jobs:
           flake8 . --exit-zero --max-line-length=127
 
       - name: Test with pytest
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-          LLM_MODEL_NAME: "test-model"
-          SECRET_KEY: "test-secret"
-          ALGORITHM: "HS256"
-          ACCESS_TOKEN_EXPIRE_MINUTES: "60"
-          DB_USERNAME: "test"
-          DB_PASSWORD: "testpassword"
-          DB_HOST: "localhost"
-          DB_NAME: "testdb"
         run: |
+          export PYTHONPATH=$PYTHONPATH:.
           pytest test/
